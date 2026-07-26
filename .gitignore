@@ -1,6 +1,18 @@
-# IDE
-.vscode
+# IDEs
+.vscode/
+.idea/
 
-build
+# CMake build trees
+build/
+build-*/
+cmake-build-*/
+CMakeUserPresets.json
 
-logs
+# Runtime output
+logs/
+*.log
+
+# Python simulation caches
+__pycache__/
+*.py[cod]
+.pytest_cache/

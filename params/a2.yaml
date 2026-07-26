@@ -1,0 +1,72 @@
+# Shared deployment contract for the project-trained Unitree A2 45D policy.
+# All 12-element arrays use FR, FL, RR, RL x hip, thigh, calf order.
+config_version: 1
+contract_id: a2_45d_project_v0
+
+policy:
+  file: models/a2_45d_policy.jit
+  sha256: 324d851114f77bb848255026bd56d8d4ebe00a72a72aac54f4271cd644c6fb65
+  golden_output: [-2.2144008, -0.5709736, 1.0404117, -0.9184026, -1.9642764, 0.3442676, -2.6518793, 2.0026057, 2.8653002, -0.3716948, 3.8551395, 2.1373310]
+  observation_dim: 45
+  action_dim: 12
+  dt: 0.02
+  action_scale: 0.25
+  scales:
+    command: [1.0, 1.0, 0.25]
+    angular_velocity: 0.25
+    joint_position: 1.0
+    joint_velocity: 0.05
+
+runtime:
+  motor_slots: 35
+  command_dt: 0.002
+
+robot:
+  joint_names:
+    - FR_hip_joint
+    - FR_thigh_joint
+    - FR_calf_joint
+    - FL_hip_joint
+    - FL_thigh_joint
+    - FL_calf_joint
+    - RR_hip_joint
+    - RR_thigh_joint
+    - RR_calf_joint
+    - RL_hip_joint
+    - RL_thigh_joint
+    - RL_calf_joint
+  motor_indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+  default_positions: [0.1, 0.9, -1.8, -0.1, 0.9, -1.8, 0.1, 0.9, -1.8, -0.1, 0.9, -1.8]
+  kp: [100.0, 100.0, 150.0, 100.0, 100.0, 150.0, 100.0, 100.0, 150.0, 100.0, 100.0, 150.0]
+  kd: [4.0, 4.0, 6.0, 4.0, 4.0, 6.0, 4.0, 4.0, 6.0, 4.0, 4.0, 6.0]
+  limits:
+    lower: [-1.01, -2.34, -2.77, -1.01, -2.34, -2.77, -1.01, -1.56, -2.77, -1.01, -1.56, -2.77]
+    upper: [1.01, 3.15, -0.54, 1.01, 3.15, -0.54, 1.01, 3.94, -0.54, 1.01, 3.94, -0.54]
+    velocity: [22.0, 22.0, 14.6667, 22.0, 22.0, 14.6667, 22.0, 22.0, 14.6667, 22.0, 22.0, 14.6667]
+    effort: [120.0, 120.0, 180.0, 120.0, 120.0, 180.0, 120.0, 120.0, 180.0, 120.0, 120.0, 180.0]
+
+commands:
+  vx: [-0.5, 1.0]
+  vy: [-0.5, 0.5]
+  yaw: [-1.0, 1.0]
+
+safety:
+  low_state_timeout_ms: 100
+  initial_state_timeout_ms: 5000
+  mainboard_prearm_timeout_ms: 2000
+  mainboard_runtime_timeout_ms: 2000
+  mode_release_timeout_ms: 30000
+  max_tilt_rad: 1.0
+  quaternion_norm_min: 0.9
+  quaternion_norm_max: 1.1
+  soft_position_limit_ratio: 0.9
+  stand_duration_s: 2.0
+  damping_duration_s: 0.5
+  stop_duration_s: 0.1
+
+sim:
+  xml: assets/a2/scene.xml
+  physics_dt: 0.005
+  base_height: 0.42
+  # MuJoCo solver overshoot only; a2_deploy ignores this without --sim.
+  joint_position_tolerance_rad: 0.005
