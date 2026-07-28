@@ -33,7 +33,7 @@ The current implementation targets the standard A2 (MotionSwitcher form `"0"`). 
 | 双频控制 / Dual-rate control | 50 Hz 生成策略/站立请求，500 Hz 过滤目标并发布 LowCmd | Produces policy/stand requests at 50 Hz and filters/publishes LowCmd at 500 Hz |
 | HG DDS | 订阅 LowState/MainBoardState，发布 CRC 正确的 35 槽 LowCmd | Subscribes to LowState/MainBoardState and publishes CRC-correct 35-slot LowCmd messages |
 | 安全监督 / Safety supervision | CRC、tick、状态新鲜度、主板、MotionSwitcher、姿态、关节和策略 deadline 门禁 | Gates on CRC, ticks, freshness, mainboard state, MotionSwitcher, orientation, joints, and policy deadlines |
-| 导航输入 / Navigation input | 支持手柄、仿真终端和本机 UDP high-policy 三种速度来源 | Supports gamepad, simulation-terminal, and loopback UDP high-policy velocity sources |
+| 导航输入 / Navigation input | 支持手柄、终端和本机 UDP high-policy 三种速度来源 | Supports gamepad, terminal, and loopback UDP high-policy velocity sources |
 | Sim2Sim | 提供单进程 Python/MuJoCo 验证和 `a2_deploy + unitree_mujoco` DDS 联调 | Provides standalone Python/MuJoCo validation and `a2_deploy + unitree_mujoco` DDS integration |
 | Sim2Real | 提供标准 A2 的网卡、状态机、受控停止、日志与故障处理流程 | Provides the network, state-machine, controlled-stop, logging, and fault workflow for a standard A2 |
 | 测试 / Tests | 覆盖合同、安全、策略、LowCmd、导航过滤和 UDP 接收器 | Covers the contract, safety, policy, LowCmd, navigation filter, and UDP receiver |
@@ -73,7 +73,7 @@ The implementation is split by responsibility; the model never writes motor comm
 
 | 组件 / Component | 职责 / Responsibility |
 |---|---|
-| [`src/main.cpp`](src/main.cpp) | CLI、配置路径解析、日志目录、仿真终端、UDP 轮询、信号处理 / CLI, config resolution, log directories, simulation terminal, UDP polling, and signals |
+| [`src/main.cpp`](src/main.cpp) | CLI、配置路径解析、日志目录、终端输入、UDP 轮询、信号处理 / CLI, config resolution, log directories, terminal input, UDP polling, and signals |
 | [`src/controller.cpp`](src/controller.cpp) | DDS、50/500 Hz 线程、状态机、目标生成、LowCmd 发布和 CSV / DDS, 50/500 Hz loops, state machine, target generation, LowCmd publishing, and CSV |
 | [`src/safety.cpp`](src/safety.cpp) | 安全输入、权限降级、故障锁存和显式 rearm / Safety inputs, authority downgrade, fault latching, and explicit rearm |
 | [`src/policy.cpp`](src/policy.cpp) | 模型哈希、TorchScript 加载、shape/probe 检查与推理 / Model hashing, TorchScript loading, shape/probe checks, and inference |
@@ -135,7 +135,7 @@ The DDS interfaces are fixed:
 
 | 执行上下文 / Context | 周期 / Trigger | 主要职责 / Responsibility |
 |---|---:|---|
-| main thread | 约 / about 20 ms | 仿真终端、high UDP、SIGINT/SIGTERM / Simulation terminal, high UDP, SIGINT/SIGTERM |
+| main thread | 约 / about 20 ms | 终端输入、high UDP、SIGINT/SIGTERM / Terminal input, high UDP, SIGINT/SIGTERM |
 | runtime thread | 生命周期 / lifetime | `A2Controller::Run()`、初始化和 teardown / `A2Controller::Run()`, initialization, and teardown |
 | DDS callbacks | 消息触发 / message-driven | 校验并更新 LowState/MainBoard 快照 / Validate and update LowState/MainBoard snapshots |
 | control thread | 50 Hz | 状态机、导航命令、low-policy 推理和 CSV / State machine, navigation commands, low-policy inference, and CSV |
@@ -300,13 +300,13 @@ Usage:
 | `--domain ID` | DDS domain，整数范围 `[0,232]`；真机默认 0，仿真默认 1 / DDS domain in `[0,232]`; hardware defaults to 0 and simulation to 1 |
 | `--config PATH` | 配置 YAML；省略时按下述顺序自动查找 / Contract YAML; resolved through the search order below when omitted |
 | `--log-dir PATH` | runtime 时间戳 CSV 的父目录；不能用于 `--check-contract` / Parent directory for timestamped runtime CSV logs; invalid with `--check-contract` |
-| `--command-source SOURCE` | `gamepad`、`terminal` 或 `high`；`terminal` 仅限 `--sim` / `gamepad`, `terminal`, or `high`; `terminal` is simulation-only |
+| `--command-source SOURCE` | `gamepad`、`terminal` 或 `high`；`terminal` 可用于仿真和真机 / `gamepad`, `terminal`, or `high`; `terminal` is available in simulation and on hardware |
 | `--high-command-port PORT` | high UDP loopback 端口，范围 `[1024,65535]`，默认 15000 / High-policy loopback UDP port in `[1024,65535]`, default 15000 |
 | `-h`, `--help` | 打印帮助后退出 / Prints help and exits |
 
-`--command-source` 可取 `gamepad`、`terminal` 或 `high`。`terminal` 只允许在 `--sim` 中使用。这个选项只选择导航速度来源，不会关闭手柄或仿真终端的安全状态事件。
+`--command-source` 可取 `gamepad`、`terminal` 或 `high`。`terminal` 可在 `--sim` 和真机使用；在真机上它仍只能通过既有安全状态机提交 `arm/stand/ctrl/damp/rearm` 和三维速度请求，不能直接发送 `LowCmd` 或绕过安全门。这个选项只选择导航速度来源。
 
-`--command-source` accepts `gamepad`, `terminal`, or `high`. `terminal` is valid only with `--sim`. This option selects only the navigation velocity source; it does not disable safety-state events from the gamepad or simulation terminal.
+`--command-source` accepts `gamepad`, `terminal`, or `high`. `terminal` is valid with `--sim` and on hardware. On hardware it still submits only existing state-machine requests and 3D velocity commands; it cannot send `LowCmd` directly or bypass safety gates. This option selects only the navigation velocity source.
 
 未指定 `--config` 时，程序按顺序查找：
 
@@ -627,9 +627,18 @@ Replace `enp3s0` with the actual wired interface:
   --log-dir logs
 ```
 
-真机默认使用手柄提供速度和状态事件。未来 high policy 上真机时，只用 `--command-source high` 替换速度来源；START/L1 组合键和物理急停仍属于独立安全链：
+真机默认使用手柄提供速度和状态事件。若使用终端控制，显式传入 `--command-source terminal`；终端可提交 `arm`、`stand`、`ctrl`、`damp`、`rearm`、`zero` 和 `cmd vx vy yaw`，但仍须通过全部真机安全门。未来 high policy 上真机时，只用 `--command-source high` 替换速度来源；START/L1 组合键和物理急停仍属于独立安全链：
 
-Hardware defaults to the gamepad for both velocity and state events. To use a future high policy on hardware, `--command-source high` replaces only the velocity source; START/L1 button combinations and the physical emergency stop remain an independent safety path:
+Hardware defaults to the gamepad for both velocity and state events. For terminal control, explicitly pass `--command-source terminal`; the terminal can submit `arm`, `stand`, `ctrl`, `damp`, `rearm`, `zero`, and `cmd vx vy yaw`, but every hardware safety gate remains required. To use a future high policy on hardware, `--command-source high` replaces only the velocity source; START/L1 button combinations and the physical emergency stop remain an independent safety path:
+
+```bash
+./build/a2_deploy \
+  --interface enp3s0 \
+  --domain 0 \
+  --command-source terminal \
+  --config params/a2.yaml \
+  --log-dir logs
+```
 
 ```bash
 ./build/a2_deploy \

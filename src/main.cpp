@@ -49,7 +49,8 @@ void PrintUsage(const char* program) {
       << "Usage:\n"
       << "  " << program << " --check-contract [--config PATH]\n"
       << "  " << program
-      << " --interface IFACE [--domain ID] [--config PATH] [--log-dir PATH]\n"
+      << " --interface IFACE [--domain ID] [--command-source SOURCE]"
+         " [--config PATH] [--log-dir PATH]\n"
       << "  " << program
       << " --sim [--interface IFACE] [--domain ID] [--command-source SOURCE]\n"
       << "      [--high-command-port PORT] [--config PATH] [--log-dir PATH]\n\n"
@@ -60,7 +61,7 @@ void PrintUsage(const char* program) {
       << "  --domain          DDS domain ID (hardware default: 0; simulation: 1)\n"
       << "  --config          Path to params/a2.yaml\n"
       << "  --log-dir         Directory in which a timestamped CSV is created\n"
-      << "  --command-source  gamepad, terminal, or high (default: terminal in sim)\n"
+      << "  --command-source  gamepad, terminal, or high (default: terminal in sim; gamepad on hardware)\n"
       << "  --high-command-port  Loopback UDP port for SOURCE=high (default: 15000)\n"
       << "  -h, --help        Show this help\n";
 }
@@ -152,17 +153,12 @@ CliOptions ParseCli(int argc, char** argv) {
     throw std::invalid_argument(
         "--log-dir is only valid with --interface");
   }
-  if (!options.simulation && options.navigation_source.has_value() &&
-      *options.navigation_source == a2::NavigationSource::kTerminal) {
-    throw std::invalid_argument(
-        "--command-source terminal is only available with --sim");
-  }
   return options;
 }
 
 void PrintTerminalHelp(const a2::NavigationSource source) {
   std::cout
-      << "Simulation terminal commands (press Enter):\n"
+      << "Terminal commands (press Enter):\n"
       << "  arm | stand | ctrl | damp | rearm | zero | quit\n";
   if (source == a2::NavigationSource::kTerminal) {
     std::cout << "  cmd <vx> <vy> <yaw_rate>\n";
@@ -349,7 +345,10 @@ int main(int argc, char** argv) {
                 << high_command_receiver->port()
                 << " (A2NAV1 vx vy yaw_rate)" << std::endl;
     }
-    if (cli.simulation) PrintTerminalHelp(navigation_source);
+    if (cli.simulation ||
+        navigation_source == a2::NavigationSource::kTerminal) {
+      PrintTerminalHelp(navigation_source);
+    }
 
     std::signal(SIGINT, HandleSignal);
     std::signal(SIGTERM, HandleSignal);
@@ -366,7 +365,11 @@ int main(int argc, char** argv) {
       completed.store(true, std::memory_order_release);
     });
 
-    bool terminal_input_open = cli.simulation;
+    // Hardware terminal control uses the same narrow navigation and operator
+    // request APIs as simulation. It never gives the terminal direct LowCmd
+    // or SafetySupervisor access.
+    bool terminal_input_open =
+        cli.simulation || navigation_source == a2::NavigationSource::kTerminal;
     bool terminal_requested_shutdown = false;
     while (!completed.load(std::memory_order_acquire) &&
            g_signal_requested == 0 && !terminal_requested_shutdown) {

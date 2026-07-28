@@ -175,14 +175,18 @@ class A2Controller::Impl {
           << " (domain " << options_.domain_id << ")\n"
           << "Waiting for CRC-valid LowState and healthy MainBoardState."
           << std::endl;
-      if (!options_.simulation ||
-          options_.navigation_source == NavigationSource::kGamepad) {
+      if (options_.navigation_source == NavigationSource::kGamepad) {
         std::cout << "START: arm damping | L1+R2: stand | L1+A: policy | "
                      "L1+Y: damping | L1+START: rearm a cleared fault"
                   << std::endl;
-      } else {
-        std::cout << "Operator state changes use simulation terminal commands: "
+      } else if (options_.navigation_source == NavigationSource::kTerminal ||
+                 options_.simulation) {
+        std::cout << "Operator state changes use terminal commands: "
                      "arm, stand, ctrl, damp, rearm."
+                  << std::endl;
+      } else {
+        std::cout << "Velocity comes from the high-policy UDP stream; "
+                     "operator state changes use the gamepad."
                   << std::endl;
       }
 
