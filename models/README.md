@@ -1,35 +1,11 @@
 # A2 policy artifact
 
-`a2_45d_policy.jit` is the deterministic actor from the locally trained A2
-iteration-20000 checkpoint. Its current local source copy is:
+`a2_45d_policy_0804.jit` is the bundled deterministic actor for the A2 45D
+deployment contract. Its SHA-256 identity is:
 
 ```text
-/home/lurvelly/Workspace/Legged-Nexus/
-  legged_gym/ctrl_model/a2/a2_45d_policy.jit
+bundled TorchScript: 886a653beb628ec09b3287b0e0db79279756e535037679f06d05c29d243b6cc8
 ```
-
-The training checkpoint and an alternate exported wrapper are stored at:
-
-```text
-/home/lurvelly/Workspace/Legged-Nexus/logs/a2/Jul22_00-16-45/model_20000.pt
-/home/lurvelly/Workspace/Legged-Nexus/logs/a2/Jul22_00-16-45/
-  exported/Jul22_00-16-45_ite20000.pt
-```
-
-Their identities are:
-
-```text
-training checkpoint: 2f0728bf629435d465fd9fb4392a235505b8eddfe4ea7ecc6fdc6ccfd7eb3eb9
-exported wrapper:    f8555f63ee2fceae0f37286860345b83522d6088cb6e144c3c1c4cc398eb708b
-bundled TorchScript: 324d851114f77bb848255026bd56d8d4ebe00a72a72aac54f4271cd644c6fb65
-```
-
-All eight actor tensors are bit-exact across the checkpoint, exported wrapper,
-and bundled TorchScript (maximum absolute tensor difference 0). Whole-file
-digests differ because the checkpoint also contains critic/optimizer state and
-the two TorchScript files use different archive/module wrappers. The exported
-wrapper additionally applies the training action clip `[-100, 100]`; this does
-not change the validated deployment outputs.
 
 The frozen ABI is one 45D observation in this order:
 
@@ -54,7 +30,7 @@ bundled policy's bytes or actions.
 Verify the artifact with:
 
 ```bash
-sha256sum models/a2_45d_policy.jit
+sha256sum models/a2_45d_policy_0804.jit
 ```
 
 Generate a config for another trained 45D policy with:

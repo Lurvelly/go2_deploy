@@ -80,6 +80,7 @@ endif()
 
 add_library(a2_runtime STATIC
     src/controller.cpp
+    src/telemetry.cpp
 )
 
 target_include_directories(a2_runtime
@@ -116,7 +117,7 @@ function(a2_stage_resource relative_path)
 endfunction()
 
 a2_stage_resource(params/a2.yaml)
-a2_stage_resource(models/a2_45d_policy.jit)
+a2_stage_resource(models/a2_45d_policy_0804.jit)
 a2_stage_resource(sim/a2_mujoco.py)
 a2_stage_resource(sim/a2_highcmd.py)
 a2_stage_resource(sim/a2_prepare_low_policy.py)
@@ -129,11 +130,11 @@ else()
 endif()
 
 if(BUILD_TESTING)
-    foreach(test_name IN ITEMS test_contract test_safety test_policy test_command test_navigation test_high_command_receiver)
+    foreach(test_name IN ITEMS test_contract test_safety test_policy test_command test_navigation test_high_command_receiver test_telemetry)
         set(test_source "${CMAKE_CURRENT_SOURCE_DIR}/tests/${test_name}.cpp")
         if(EXISTS "${test_source}")
             add_executable(${test_name} "${test_source}")
-            if(test_name STREQUAL "test_command")
+            if(test_name STREQUAL "test_command" OR test_name STREQUAL "test_telemetry")
                 target_link_libraries(${test_name} PRIVATE a2_runtime)
             else()
                 target_link_libraries(${test_name} PRIVATE a2_core)
@@ -161,7 +162,7 @@ install(FILES params/a2.yaml
     OPTIONAL
 )
 
-install(FILES models/a2_45d_policy.jit models/README.md
+install(FILES models/a2_45d_policy_0804.jit models/README.md
     DESTINATION ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}/models
     OPTIONAL
 )

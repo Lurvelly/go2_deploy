@@ -150,8 +150,8 @@ The default contract is [`params/a2.yaml`](params/a2.yaml). At startup, the prog
 | 项目 / Item | 固定值 / Frozen value |
 |---|---|
 | Contract ID | `a2_45d_project_v0` |
-| Model | `models/a2_45d_policy.jit` |
-| SHA-256 | `324d851114f77bb848255026bd56d8d4ebe00a72a72aac54f4271cd644c6fb65` |
+| Model | `models/a2_45d_policy_0804.jit` |
+| SHA-256 | `886a653beb628ec09b3287b0e0db79279756e535037679f06d05c29d243b6cc8` |
 | Policy input/output | `float32 [1,45] -> float32 [1,12]` |
 | Policy / command period | `0.02 s (50 Hz)` / `0.002 s (500 Hz)` |
 | Action mapping | `q_target = default_q + 0.25 * raw_action` |

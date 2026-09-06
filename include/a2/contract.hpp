@@ -19,7 +19,7 @@ inline constexpr std::size_t kMotorSlots = 35;
 
 inline constexpr std::string_view kContractId = "a2_45d_project_v0";
 inline constexpr std::string_view kBundledPolicySha256 =
-    "324d851114f77bb848255026bd56d8d4ebe00a72a72aac54f4271cd644c6fb65";
+    "886a653beb628ec09b3287b0e0db79279756e535037679f06d05c29d243b6cc8";
 
 inline constexpr float kPolicyDt = 0.02F;
 inline constexpr float kCommandDt = 0.002F;

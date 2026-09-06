@@ -4,6 +4,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstring>
+#include <cstdint>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
@@ -42,6 +43,9 @@ struct CliOptions {
   std::optional<fs::path> log_directory;
   std::optional<a2::NavigationSource> navigation_source;
   int high_command_port{15000};
+  int telemetry_port{15001};
+  bool telemetry_enabled{false};
+  bool telemetry_confirmed_body_velocity{false};
 };
 
 void PrintUsage(const char* program) {
@@ -63,6 +67,10 @@ void PrintUsage(const char* program) {
       << "  --log-dir         Directory in which a timestamped CSV is created\n"
       << "  --command-source  gamepad, terminal, or high (default: terminal in sim; gamepad on hardware)\n"
       << "  --high-command-port  Loopback UDP port for SOURCE=high (default: 15000)\n"
+      << "  --telemetry-enable    Publish A2TEL1 telemetry after committed policy inference\n"
+      << "  --telemetry-port      Loopback UDP port for A2TEL1 (default: 15001)\n"
+      << "  --telemetry-confirm-sport-state-body\n"
+      << "                      Confirm target-A2 SportModeState velocity is measured body-frame data\n"
       << "  -h, --help        Show this help\n";
 }
 
@@ -110,10 +118,15 @@ CliOptions ParseCli(int argc, char** argv) {
       options.check_contract = true;
     } else if (argument == "--sim") {
       options.simulation = true;
+    } else if (argument == "--telemetry-enable") {
+      options.telemetry_enabled = true;
+    } else if (argument == "--telemetry-confirm-sport-state-body") {
+      options.telemetry_confirmed_body_velocity = true;
     } else if (argument == "--interface" || argument == "--config" ||
                argument == "--log-dir" || argument == "--domain" ||
                argument == "--command-source" ||
-               argument == "--high-command-port") {
+               argument == "--high-command-port" ||
+               argument == "--telemetry-port") {
       if (i + 1 >= argc) {
         throw std::invalid_argument("Missing value after " + argument);
       }
@@ -131,6 +144,8 @@ CliOptions ParseCli(int argc, char** argv) {
         options.log_directory = fs::path(value);
       } else if (argument == "--command-source") {
         options.navigation_source = ParseNavigationSource(value);
+      } else if (argument == "--telemetry-port") {
+        options.telemetry_port = ParsePort(value);
       } else {
         options.high_command_port = ParsePort(value);
       }
@@ -145,13 +160,26 @@ CliOptions ParseCli(int argc, char** argv) {
   }
   if (options.check_contract &&
       (options.network_interface.has_value() || options.domain_id.has_value() ||
-       options.simulation || options.navigation_source.has_value())) {
+       options.simulation || options.navigation_source.has_value() ||
+       options.telemetry_enabled ||
+       options.telemetry_confirmed_body_velocity)) {
     throw std::invalid_argument(
         "--check-contract cannot be combined with DDS runtime options");
   }
   if (options.check_contract && options.log_directory.has_value()) {
     throw std::invalid_argument(
         "--log-dir is only valid with --interface");
+  }
+  if (options.telemetry_confirmed_body_velocity &&
+      !options.telemetry_enabled) {
+    throw std::invalid_argument(
+        "--telemetry-confirm-sport-state-body requires --telemetry-enable");
+  }
+  if (options.telemetry_enabled &&
+      !options.telemetry_confirmed_body_velocity) {
+    throw std::invalid_argument(
+        "--telemetry-enable requires --telemetry-confirm-sport-state-body; "
+        "verify target-A2 body-frame estimator first");
   }
   return options;
 }
@@ -335,6 +363,11 @@ int main(int argc, char** argv) {
     runtime_options.domain_id = domain_id;
     runtime_options.simulation = cli.simulation;
     runtime_options.navigation_source = navigation_source;
+    runtime_options.telemetry_enabled = cli.telemetry_enabled;
+    runtime_options.telemetry_confirmed_body_velocity =
+        cli.telemetry_confirmed_body_velocity;
+    runtime_options.telemetry_port =
+        static_cast<std::uint16_t>(cli.telemetry_port);
     a2::A2Controller controller(config, runtime_options);
 
     std::unique_ptr<a2::HighCommandReceiver> high_command_receiver;

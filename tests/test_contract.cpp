@@ -52,7 +52,7 @@ void TestFrozenConstants() {
   Check(a2::kMotorSlots == 35, "HG command has 35 motor slots");
   Check(a2::kContractId == "a2_45d_project_v0", "contract id is pinned");
   Check(a2::kBundledPolicySha256 ==
-            "324d851114f77bb848255026bd56d8d4ebe00a72a72aac54f4271cd644c6fb65",
+            "886a653beb628ec09b3287b0e0db79279756e535037679f06d05c29d243b6cc8",
         "bundled policy SHA-256 is pinned");
   Check(a2::kJointNames.front() == "FR_hip_joint",
         "policy order begins with FR");
@@ -192,7 +192,7 @@ void TestConfiguration() {
   Check(config.source_path == std::filesystem::absolute(config_path),
         "configuration records its absolute source path");
   Check(config.model_path == RepositoryRoot() / "models" /
-                                 "a2_45d_policy.jit",
+                                 "a2_45d_policy_0804.jit",
         "model path is resolved relative to the project root");
   Check(config.xml_path == RepositoryRoot() / "assets" / "a2" / "scene.xml",
         "MJCF path is resolved relative to the project root");

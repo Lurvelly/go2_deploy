@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -32,6 +33,11 @@ struct RuntimeOptions {
   bool simulation{false};
   NavigationSource navigation_source{NavigationSource::kGamepad};
   std::chrono::milliseconds high_policy_timeout{200};
+  // Telemetry is opt-in. Hardware must explicitly confirm that the selected
+  // SportModeState velocity is a measured body-frame estimator value.
+  bool telemetry_enabled{false};
+  bool telemetry_confirmed_body_velocity{false};
+  std::uint16_t telemetry_port{15001};
 };
 
 class A2Controller {

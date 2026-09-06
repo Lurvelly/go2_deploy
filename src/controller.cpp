@@ -26,11 +26,13 @@
 #include "a2/low_command.hpp"
 #include "a2/navigation.hpp"
 #include "a2/policy_deadline.hpp"
+#include "a2/telemetry.hpp"
 
 #include <unitree/dds_wrapper/common/unitree_joystick.hpp>
 #include <unitree/idl/hg/LowCmd_.hpp>
 #include <unitree/idl/hg/LowState_.hpp>
 #include <unitree/idl/hg/MainBoardState_.hpp>
+#include <unitree/idl/go2/SportModeState_.hpp>
 #include <unitree/robot/b2/motion_switcher/motion_switcher_client.hpp>
 #include <unitree/robot/channel/channel_factory.hpp>
 #include <unitree/robot/channel/channel_publisher.hpp>
@@ -43,10 +45,16 @@ using Clock = std::chrono::steady_clock;
 using LowCmd = unitree_hg::msg::dds_::LowCmd_;
 using LowState = unitree_hg::msg::dds_::LowState_;
 using MainBoardState = unitree_hg::msg::dds_::MainBoardState_;
+using SportModeState = unitree_go::msg::dds_::SportModeState_;
 
 constexpr const char* kLowCommandTopic = "rt/lowcmd";
 constexpr const char* kLowStateTopic = "rt/lowstate";
 constexpr const char* kMainboardStateTopic = "rt/lf/mainboardstate";
+// This source is only used after --telemetry-confirm-sport-state-body.  The
+// topic is intentionally fixed to the Unitree estimator topic documented for
+// A2 bring-up; no commanded value is ever substituted for it.
+constexpr const char* kSportModeStateTopic = "rt/lf/sportmodestate";
+constexpr auto kTelemetryMaxAge = std::chrono::milliseconds(40);
 
 enum class RuntimePhase {
   kPrearm = 0,
@@ -122,6 +130,11 @@ class A2Controller::Impl {
       : config_(std::move(config)),
         options_(std::move(options)),
         policy_(config_) {
+    if (options_.telemetry_enabled &&
+        !options_.telemetry_confirmed_body_velocity) {
+      throw std::invalid_argument(
+          "telemetry requires explicit measured body-velocity confirmation");
+    }
     // The A2 wire format exposes R2 as a button bit. Disable the generic
     // trigger-axis smoothing so L1+R2 mode transitions retain edge semantics.
     gamepad_.RT.smooth = 1.0F;
@@ -147,6 +160,14 @@ class A2Controller::Impl {
       unitree::robot::ChannelFactory::Instance()->Init(
           options_.domain_id, options_.network_interface);
       dds_factory_initialized_ = true;
+
+      if (options_.telemetry_enabled) {
+        // The producer owns a fresh session ID per controller process.  A
+        // socket/setup failure aborts startup before any motor authority is
+        // granted; later send failures only suppress telemetry packets.
+        telemetry_producer_ = std::make_unique<A2TelemetryProducer>(
+            "127.0.0.1", options_.telemetry_port);
+      }
 
       if (options_.simulation) {
         last_motion_form_ = config_.expected_form;
@@ -175,6 +196,12 @@ class A2Controller::Impl {
           << " (domain " << options_.domain_id << ")\n"
           << "Waiting for CRC-valid LowState and healthy MainBoardState."
           << std::endl;
+      if (options_.telemetry_enabled) {
+        std::cout << "A2TEL1 telemetry enabled on 127.0.0.1:"
+                  << options_.telemetry_port
+                  << " using measured SportModeState body velocity"
+                  << std::endl;
+      }
       if (options_.navigation_source == NavigationSource::kGamepad) {
         std::cout << "START: arm damping | L1+R2: stand | L1+A: policy | "
                      "L1+Y: damping | L1+START: rearm a cleared fault"
@@ -257,6 +284,13 @@ class A2Controller::Impl {
     std::uint64_t sequence{0};
     std::uint32_t state0{0};
     Clock::time_point received_at{};
+  };
+
+  struct SportModeSnapshot {
+    bool received{false};
+    std::uint64_t sequence{0};
+    Clock::time_point received_at{};
+    Vec3 body_linear_velocity{};
   };
 
   struct DesiredCommand {
@@ -429,6 +463,11 @@ class A2Controller::Impl {
     mainboard_subscriber_ =
         std::make_shared<unitree::robot::ChannelSubscriber<MainBoardState>>(
             kMainboardStateTopic);
+    if (options_.telemetry_enabled) {
+      sport_mode_state_subscriber_ =
+          std::make_shared<unitree::robot::ChannelSubscriber<SportModeState>>(
+              kSportModeStateTopic);
+    }
 
     low_command_publisher_->InitChannel();
     low_state_subscriber_->InitChannel(
@@ -449,6 +488,17 @@ class A2Controller::Impl {
           }
         },
         1);
+    if (sport_mode_state_subscriber_) {
+      sport_mode_state_subscriber_->InitChannel(
+          [this](const void* message) {
+            try {
+              OnSportModeState(message);
+            } catch (...) {
+              RecordWorkerFailure("SportModeState DDS callback");
+            }
+          },
+          1);
+    }
   }
 
   void RecordWorkerFailure(const char* worker) noexcept {
@@ -500,6 +550,8 @@ class A2Controller::Impl {
 
   void CloseChannels() noexcept {
     try {
+      if (sport_mode_state_subscriber_)
+        sport_mode_state_subscriber_->CloseChannel();
       if (mainboard_subscriber_) mainboard_subscriber_->CloseChannel();
       if (low_state_subscriber_) low_state_subscriber_->CloseChannel();
       if (low_command_publisher_) low_command_publisher_->CloseChannel();
@@ -507,6 +559,7 @@ class A2Controller::Impl {
       std::cerr << "DDS channel close failed: " << error.what() << std::endl;
     }
     mainboard_subscriber_.reset();
+    sport_mode_state_subscriber_.reset();
     low_state_subscriber_.reset();
     low_command_publisher_.reset();
   }
@@ -532,6 +585,7 @@ class A2Controller::Impl {
       }
     }
     CloseChannels();
+    telemetry_producer_.reset();
     motion_switcher_.reset();
     if (dds_factory_initialized_) {
       try {
@@ -618,6 +672,25 @@ class A2Controller::Impl {
     ++mainboard_state_.sequence;
   }
 
+  void OnSportModeState(const void* message) {
+    if (message == nullptr || !telemetry_producer_) return;
+    const auto now = Clock::now();
+    const SportModeState state = *static_cast<const SportModeState*>(message);
+    const auto& velocity = state.velocity();
+    if (!Finite(velocity)) {
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      sport_mode_state_.received = false;
+      return;
+    }
+    SportModeSnapshot snapshot;
+    snapshot.received = true;
+    snapshot.received_at = now;
+    snapshot.body_linear_velocity = velocity;
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    snapshot.sequence = sport_mode_state_.sequence + 1;
+    sport_mode_state_ = snapshot;
+  }
+
   RobotSnapshot CopyRobotState() const {
     std::lock_guard<std::mutex> lock(state_mutex_);
     return robot_state_;
@@ -626,6 +699,11 @@ class A2Controller::Impl {
   MainboardSnapshot CopyMainboardState() const {
     std::lock_guard<std::mutex> lock(state_mutex_);
     return mainboard_state_;
+  }
+
+  SportModeSnapshot CopySportModeState() const {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    return sport_mode_state_;
   }
 
   DesiredCommand CopyDesired() const {
@@ -977,6 +1055,70 @@ class A2Controller::Impl {
     return filtered.command;
   }
 
+  static std::uint64_t MonotonicNs(const Clock::time_point point) noexcept {
+    const auto duration = point.time_since_epoch();
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count());
+  }
+
+  void PublishCommittedTelemetry(const RobotSnapshot& state,
+                                 const Vec3& filtered_command,
+                                 const PolicyResult& policy_result,
+                                 const SafetyDecision& commit_decision,
+                                 const Clock::time_point policy_commit_at) {
+    if (!telemetry_producer_) return;
+
+    const SportModeSnapshot velocity = CopySportModeState();
+    const bool source_time_valid =
+        velocity.received && velocity.sequence != 0 &&
+        velocity.received_at <= policy_commit_at;
+    const bool source_fresh =
+        source_time_valid && policy_commit_at - velocity.received_at <=
+                                 kTelemetryMaxAge;
+    const bool state_fresh =
+        state.received && state.sequence != 0 &&
+        state.received_at <= policy_commit_at &&
+        policy_commit_at - state.received_at <= kTelemetryMaxAge;
+    const auto capture_delta =
+        source_time_valid && state.received_at >= velocity.received_at
+            ? state.received_at - velocity.received_at
+            : (source_time_valid ? velocity.received_at - state.received_at
+                                 : kTelemetryMaxAge + std::chrono::milliseconds(1));
+    if (!source_fresh || !state_fresh || capture_delta > kTelemetryMaxAge ||
+        !Finite(velocity.body_linear_velocity) || !commit_decision.policy_allowed) {
+      if (!telemetry_missing_reported_) {
+        telemetry_missing_reported_ = true;
+        std::cerr << "A2TEL1 telemetry suppressed: measured SportModeState "
+                     "body velocity is unavailable or stale"
+                  << std::endl;
+      }
+      return;
+    }
+    telemetry_missing_reported_ = false;
+
+    A2TelemetrySample sample;
+    sample.state_sequence = state.sequence;
+    sample.state_capture_time_ns = MonotonicNs(state.received_at);
+    sample.base_velocity_capture_time_ns = MonotonicNs(velocity.received_at);
+    sample.policy_commit_time_ns = MonotonicNs(policy_commit_at);
+    sample.filtered_command = filtered_command;
+    sample.projected_gravity_b = state.projected_gravity;
+    sample.base_linear_velocity_b = velocity.body_linear_velocity;
+    sample.base_angular_velocity_b = state.angular_velocity;
+    sample.low_level_policy_action = policy_result.action;
+    sample.base_velocity_source = "unitree_sport_state_body";
+    sample.motion_permitted = true;
+    sample.phase = "CTRL";
+    sample.fault.clear();
+    if (!telemetry_producer_->Publish(sample) &&
+        !telemetry_publish_failure_reported_) {
+      telemetry_publish_failure_reported_ = true;
+      std::cerr << "A2TEL1 telemetry publish failed; stream latched until "
+                   "controller restart"
+                << std::endl;
+    }
+  }
+
   void UpdateDesired(const RobotSnapshot& state,
                      const SafetyDecision& decision,
                      Clock::time_point now) {
@@ -1077,6 +1219,14 @@ class A2Controller::Impl {
           desired_.requested_q = policy_result.target_q;
           committed = true;
         }
+      }
+      if (committed) {
+        // This is the sole producer hook: raw action and filtered command are
+        // taken from the exact inference result that passed the revision and
+        // safety commit gate.  A missing estimator sample suppresses the
+        // packet, allowing the high-policy watchdog to stop the robot.
+        PublishCommittedTelemetry(state, velocity_command, policy_result,
+                                  commit_decision, inference_finished);
       }
       if (!committed) policy_.Reset();
     } catch (const std::exception& error) {
@@ -1314,10 +1464,14 @@ class A2Controller::Impl {
   unitree::robot::ChannelPublisherPtr<LowCmd> low_command_publisher_;
   unitree::robot::ChannelSubscriberPtr<LowState> low_state_subscriber_;
   unitree::robot::ChannelSubscriberPtr<MainBoardState> mainboard_subscriber_;
+  unitree::robot::ChannelSubscriberPtr<SportModeState>
+      sport_mode_state_subscriber_;
+  std::unique_ptr<A2TelemetryProducer> telemetry_producer_;
 
   mutable std::mutex state_mutex_;
   RobotSnapshot robot_state_;
   MainboardSnapshot mainboard_state_;
+  SportModeSnapshot sport_mode_state_;
 
   mutable std::mutex desired_mutex_;
   DesiredCommand desired_;
@@ -1333,6 +1487,8 @@ class A2Controller::Impl {
   Vec3 filtered_navigation_action_{};
   bool high_policy_connected_{false};
   bool dds_inputs_ready_reported_{false};
+  bool telemetry_missing_reported_{false};
+  bool telemetry_publish_failure_reported_{false};
   PolicyDeadlineWatchdog policy_deadline_watchdog_;
 
   unitree::common::UnitreeJoystick gamepad_;
